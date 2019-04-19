@@ -7,6 +7,8 @@ import zipfile
 import os
 import subprocess
 import stat
+import threading
+import xml.etree.ElementTree as ET
 
 from homeassistant.const import (CONF_SCAN_INTERVAL)
 from homeassistant.helpers import config_validation as cv
@@ -25,17 +27,17 @@ _LOGGER.setLevel(logging.DEBUG)
 DOMAIN = 'ngrok'
 
 """ NGRok authentication token """
-CONF_NGROK_AUTH_TOKEN = 'ngrok_auth_token'
-CONF_NGROK_INSTALL_DIR = 'ngrok_install_dir'
-CONF_NGROK_OS_VERSION = 'ngrok_os_version'
+CONF_NGROK_AUTH_TOKEN = 'auth_token'
+CONF_NGROK_INSTALL_DIR = 'install_dir'
+CONF_NGROK_OS_VERSION = 'os_version'
 
 """ NGrok authentication token """
-CONF_HA_LOCAL_IP_ADDRESS = 'ha_local_ip_address'
-CONF_HA_LOCAL_PORT = 'ha_local_port'
+CONF_HA_LOCAL_IP_ADDRESS = 'ip_address'
+CONF_HA_LOCAL_PORT = 'port'
 
 """ Optional parameters """
-DEFAULT_SCAN_INTERVAL = timedelta(seconds=600)
-DEFAULT_NGROK_INSTALL_DIR = '/.ngrock'
+DEFAULT_SCAN_INTERVAL = timedelta(seconds=5)
+DEFAULT_NGROK_INSTALL_DIR = '.ngrock'
 DEFAULT_NGROK_OS_VERSION = 'Linux (ARM)'
 
 CONFIG_SCHEMA = vol.Schema({
@@ -79,11 +81,14 @@ async def async_setup(hass, config):
     """ Add a state """
     hass.states.async_set('hello_state.world', 'Paulus')
 
-    async def async_run_ngrok(command_line):
-        _LOGGER.debug('Executing: ' + str(command_line))
-        output_bytes = subprocess.check_output(command_line, shell=True)
-        output_str = output_bytes.decode('utf8')
-        _LOGGER.debug('output: ' + output_str)
+    def thread_run_ngrok(command_line):
+        try:
+            _LOGGER.debug('Executing: ' + str(command_line))
+            output_bytes = subprocess.check_output(command_line, shell=True)
+            output_str = output_bytes.decode('utf8')
+            _LOGGER.debug('output: ' + output_str)
+        except subprocess.CalledProcessError as CPE:
+            _LOGGER.error('ERROR: ' + str(CPE))
         pass
 
     """ Check if NGRok is installed """
@@ -91,78 +96,113 @@ async def async_setup(hass, config):
 
         if ngrok_os_version in NGROK_EXECUTABLE_URL_MAP:
 
+            # get the executable ngrok file extension (e.g. ".exe" in windows, "" in linux)
             ext = NGROK_EXECUTABLE_URL_MAP[ngrok_os_version]['ext']
 
-            # get the current custom component foldder
+            # get the current ngrok custom-component folder
             ngrok_custom_component_dir = os.path.dirname(os.path.realpath(__file__))
 
-            # get up of 2 folders
+            # get up of 2 folders >>> up to homeassistant config directory
             homeassitant_dir = dirname(dirname(ngrok_custom_component_dir))
 
-            # Check if ngrok_install_dir exists
+            # Check if homeassistant config dir exists...
             if os.path.isdir(homeassitant_dir):
                 _LOGGER.debug(homeassitant_dir + ' dir exists')
 
+                # ngrok installation dir
+                ngrok_dir = os.path.join(homeassitant_dir, ngrok_install_dir)
+
                 # Check if ngrok dir exists
-                ngrok_dir = homeassitant_dir + ngrok_install_dir
                 if not os.path.isdir(ngrok_dir):
+                    # ngrok dir does not exists >>> create it!
                     _LOGGER.debug(ngrok_dir + ' dir does not exist')
                     try:
+                        # trying to create ngrok dir
                         os.mkdir(ngrok_dir)
                     except OSError:
-                        _LOGGER.warning("Creation of the directory %s failed" % ngrok_dir)
-                        return
+                        _LOGGER.error("Creation of the ngrok directory %s failed" % ngrok_dir)
                     else:
-                        _LOGGER.debug("Successfully created the directory %s " % ngrok_dir)
+                        # ngrok dir created!
+                        _LOGGER.debug(ngrok_dir + ' dir created')
 
+                # Check if ngrok dir exists
                 if os.path.isdir(ngrok_dir):
-                    # Check if ngrok exists
-                    ngrok_file = ngrok_dir + '/ngrok'
-                    if not os.path.isfile(ngrok_file + ext):
+
+                    # Create path to ngrok execution file
+                    ngrok_file = os.path.join(ngrok_dir, 'ngrok')
+                    ngrok_file_ext = ngrok_file + ext
+
+                    # Check if ngrok execution file exists
+                    if not os.path.isfile(ngrok_file_ext):
+                        # ngrok execution file does not exist >>> try to get it
                         _LOGGER.debug(ngrok_file + ext + ' file not found >>> downloading it...')
+
+                        # get url to download ngrok zip file on the basis of OS version
                         url = NGROK_EXECUTABLE_URL_MAP[ngrok_os_version]['url']
+
+                        # get zip filename and related file
                         ngrok_zip_filename = basename(url)
-                        ngrok_zip_file = ngrok_dir + '/' + ngrok_zip_filename
+                        ngrok_zip_file = os.path.join(ngrok_dir, ngrok_zip_filename)
+
+                        # downloading ngrok zip filename
                         _LOGGER.debug('Downloading ngrok zip file...')
                         urllib.request.urlretrieve(url, ngrok_zip_file)
 
+                        # check if download succeeded
                         if os.path.isfile(ngrok_zip_file):
+                            # ngork download succeessfully
                             _LOGGER.debug('ngrok zip file downloaded')
+                            # unzip ngork downloaded zip file...
                             zip_ref = zipfile.ZipFile(ngrok_zip_file, 'r')
                             _LOGGER.debug('Extracting ngrok zip file...')
                             zip_ref.extractall(ngrok_dir)
                             zip_ref.close()
                         else:
-                            _LOGGER.warning('ngrok zip file download FAILED')
+                            _LOGGER.error('ngrok zip file download failed')
 
-                    if os.path.isfile(ngrok_file + ext):
-                        _LOGGER.debug(ngrok_file + ext + ' file found.')
+                    # Check if ngrok execution file exists
+                    if os.path.isfile(ngrok_file_ext):
+                        # ngrok execution file exists!
+                        _LOGGER.debug(ngrok_file_ext + ' file found.')
                         _LOGGER.debug('Changing working directory to: ' + ngrok_dir)
+                        # changing working directory to ngrok directory
                         os.chdir(ngrok_dir)
                         _LOGGER.debug('working directory is: ' + os.getcwd())
+                        # create command line to generate authentication token
                         command_line = ['ngrok' + ext, 'authtoken', ngrok_auth_token]
                         _LOGGER.debug('Executing: ' + str(command_line))
                         try:
                             output_bytes = subprocess.check_output(command_line, shell=True)
-                            output_str = output_bytes.decode('utf8')
-                            _LOGGER.debug('output: ' + output_str)
+                            output_str = output_bytes.decode('utf8')[0:-1]
+                            needle = 'Authtoken saved to configuration file'
+                            if output_str[0:len(needle)] == needle:
+                                _LOGGER.debug('output: ' + output_str)
+                                command_line = ['ngrok' + ext, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
+                                t = threading.Thread(target=thread_run_ngrok, args=[command_line])
+                                t.start()
 
-                            command_line = ['ngrok' + ext, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
-                            hass.async_create_task(async_run_ngrok(command_line))
-
+                            else:
+                                _LOGGER.error('saving ngrok authentication token failed')
                         except PermissionError as PE:
-                            _LOGGER.debug('Permission error')
+                            _LOGGER.error('Permission error')
                             _LOGGER.debug(str(PE))
                             _LOGGER.debug(oct(stat.S_IMODE(os.lstat(ngrok_file + ext).st_mode)))
                             _LOGGER.debug(oct(stat.S_IMODE(os.stat(ngrok_file + ext).st_mode)))
                             _LOGGER.debug(os.access(ngrok_file + ext, os.X_OK))
                             pass
-
+                    else:
+                        # ngrok installation dir does not exists!
+                        _LOGGER.error('ngrok execution file not found: '+ngrok_file_ext)
+                else:
+                    # ngrok installation dir does not exists!
+                    _LOGGER.error(ngrok_install_dir + ' dir does not exist')
             else:
-                _LOGGER.warning(ngrok_install_dir + ' dir does not exist')
+                # homeassistant config dir does not exists!
+                _LOGGER.error(homeassitant_dir + ' dir does not exist')
 
         else:
-            _LOGGER.warning('ngrok os version ' + ngrok_os_version + ' is not supported')
+            # os version not supported...
+            _LOGGER.error('ngrok os version ' + ngrok_os_version + ' is not supported')
 
         pass
 
@@ -171,6 +211,14 @@ async def async_setup(hass, config):
     """ Called at the very beginning and periodically, each 5 seconds """
     async def async_update_ngrok_status():
         _LOGGER.debug('async_update_devices_status()')
+        url = 'http://localhost:4040/api/tunnels'
+        resource = urllib.request.urlopen(url)
+        charset = resource.headers.get_content_charset()
+        if charset is None:
+            charset = 'utf8'
+        content = resource.read().decode(charset)
+        _LOGGER.debug(content['tunnels'][0]['public_url'])
+
 
     await async_update_ngrok_status()
 
