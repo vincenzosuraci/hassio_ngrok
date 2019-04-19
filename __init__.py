@@ -57,14 +57,14 @@ CONFIG_SCHEMA = vol.Schema({
 }, extra=vol.ALLOW_EXTRA)
 
 NGROK_EXECUTABLE_URL_MAP = {
-    'Mac OS X': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-darwin-amd64.zip', 'ext': ''},
-    'Linux': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip', 'ext': ''},
-    'Mac (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-darwin-386.zip', 'ext': ''},
-    'Windows (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-386.zip', 'ext': '.exe'},
-    'Linux (ARM)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-arm.zip', 'ext': ''},
-    'Linux (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-386.zip', 'ext': ''},
-    'FreeBSD (64-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-freebsd-amd64.zip', 'ext': ''},
-    'FreeBSD (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-freebsd-386.zip', 'ext': ''},
+    'Mac OS X': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-darwin-amd64.zip', 'ext': '', 'prefix': './'},
+    'Linux': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip', 'ext': '', 'prefix': './'},
+    'Mac (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-darwin-386.zip', 'ext': '', 'prefix': './'},
+    'Windows (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-386.zip', 'ext': '.exe', 'prefix': ''},
+    'Linux (ARM)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-arm.zip', 'ext': '', 'prefix': './'},
+    'Linux (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-386.zip', 'ext': '', 'prefix': './'},
+    'FreeBSD (64-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-freebsd-amd64.zip', 'ext': '', 'prefix': './'},
+    'FreeBSD (32-Bit)': {'url': 'https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-freebsd-386.zip', 'ext': '', 'prefix': './'},
 }
 
 async def async_setup(hass, config):
@@ -98,6 +98,9 @@ async def async_setup(hass, config):
     async def async_ngrok_installation():
 
         if ngrok_os_version in NGROK_EXECUTABLE_URL_MAP:
+
+            # get the prefix for the executable file
+            prefix = NGROK_EXECUTABLE_URL_MAP[ngrok_os_version]['prefix']
 
             # get the executable ngrok file extension (e.g. ".exe" in windows, "" in linux)
             ext = NGROK_EXECUTABLE_URL_MAP[ngrok_os_version]['ext']
@@ -172,7 +175,8 @@ async def async_setup(hass, config):
                         os.chdir(ngrok_dir)
                         _LOGGER.debug('working directory is: ' + os.getcwd())
                         # create command line to generate authentication token
-                        command_line = ['ngrok' + ext, 'authtoken', ngrok_auth_token]
+                        ngrok_exec = prefix + 'ngrok' + ext
+                        command_line = [ngrok_exec, 'authtoken', ngrok_auth_token]
                         _LOGGER.debug('Executing: ' + str(command_line))
                         try:
                             output_bytes = subprocess.check_output(command_line, shell=True)
@@ -180,7 +184,7 @@ async def async_setup(hass, config):
                             needle = 'Authtoken saved to configuration file'
                             if output_str[0:len(needle)] == needle:
                                 _LOGGER.debug('output: ' + output_str)
-                                command_line = ['ngrok' + ext, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
+                                command_line = [ngrok_exec, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
                                 # create thread and starts it
                                 hass.data[DOMAIN]['thread'] = threading.Thread(target=thread_run_ngrok, args=[command_line])
                                 hass.data[DOMAIN]['thread'].start()
