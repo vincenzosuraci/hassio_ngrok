@@ -8,7 +8,7 @@ import os
 import subprocess
 import stat
 import threading
-import xml.etree.ElementTree as ET
+import json
 
 from homeassistant.const import (CONF_SCAN_INTERVAL)
 from homeassistant.helpers import config_validation as cv
@@ -25,6 +25,7 @@ _LOGGER.setLevel(logging.DEBUG)
 """ This is needed, it impact on the name to be called in configurations.yaml """
 """ Ref: https://developers.home-assistant.io/docs/en/creating_integration_manifest.html"""
 DOMAIN = 'ngrok'
+OBJECT_ID_PUBLIC_URL = 'public_url'
 
 """ NGRok authentication token """
 CONF_NGROK_AUTH_TOKEN = 'auth_token'
@@ -32,6 +33,7 @@ CONF_NGROK_INSTALL_DIR = 'install_dir'
 CONF_NGROK_OS_VERSION = 'os_version'
 
 """ NGrok authentication token """
+CONF_HA_LOCAL_PROTOCOL = 'protocol'
 CONF_HA_LOCAL_IP_ADDRESS = 'ip_address'
 CONF_HA_LOCAL_PORT = 'port'
 
@@ -39,13 +41,15 @@ CONF_HA_LOCAL_PORT = 'port'
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=5)
 DEFAULT_NGROK_INSTALL_DIR = '.ngrock'
 DEFAULT_NGROK_OS_VERSION = 'Linux (ARM)'
+DEFAULT_HA_LOCAL_PROTOCOL = 'http'
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
         vol.Required(CONF_NGROK_AUTH_TOKEN): cv.string,
         vol.Required(CONF_HA_LOCAL_IP_ADDRESS): cv.string,
         vol.Required(CONF_HA_LOCAL_PORT): cv.port,
-        vol.Required(CONF_NGROK_OS_VERSION): cv.string,
+        vol.Required(CONF_HA_LOCAL_PROTOCOL, default=DEFAULT_HA_LOCAL_PROTOCOL): cv.string,
+        vol.Required(CONF_NGROK_OS_VERSION, default=DEFAULT_NGROK_OS_VERSION): cv.string,
 
         vol.Optional(CONF_NGROK_INSTALL_DIR, default=DEFAULT_NGROK_INSTALL_DIR): cv.string,
         vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): cv.time_period,
@@ -72,21 +76,20 @@ async def async_setup(hass, config):
     ngrok_install_dir = config[DOMAIN][CONF_NGROK_INSTALL_DIR]
     ha_local_ip_address = config[DOMAIN][CONF_HA_LOCAL_IP_ADDRESS]
     ha_local_port = config[DOMAIN][CONF_HA_LOCAL_PORT]
+    ha_local_protocol = config[DOMAIN][CONF_HA_LOCAL_PROTOCOL]
     scan_interval = config[DOMAIN][CONF_SCAN_INTERVAL]
     ngrok_os_version = config[DOMAIN][CONF_NGROK_OS_VERSION]
 
     hass.data[DOMAIN] = {
+        'thread': None,
+        'public_url': None,
     }
-
-    """ Add a state """
-    hass.states.async_set('hello_state.world', 'Paulus')
 
     def thread_run_ngrok(command_line):
         try:
             _LOGGER.debug('Executing: ' + str(command_line))
             output_bytes = subprocess.check_output(command_line, shell=True)
             output_str = output_bytes.decode('utf8')
-            _LOGGER.debug('output: ' + output_str)
         except subprocess.CalledProcessError as CPE:
             _LOGGER.error('ERROR: ' + str(CPE))
         pass
@@ -178,9 +181,9 @@ async def async_setup(hass, config):
                             if output_str[0:len(needle)] == needle:
                                 _LOGGER.debug('output: ' + output_str)
                                 command_line = ['ngrok' + ext, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
-                                t = threading.Thread(target=thread_run_ngrok, args=[command_line])
-                                t.start()
-
+                                # create thread and starts it
+                                hass.data[DOMAIN]['thread'] = threading.Thread(target=thread_run_ngrok, args=[command_line])
+                                hass.data[DOMAIN]['thread'].start()
                             else:
                                 _LOGGER.error('saving ngrok authentication token failed')
                         except PermissionError as PE:
@@ -216,16 +219,34 @@ async def async_setup(hass, config):
         charset = resource.headers.get_content_charset()
         if charset is None:
             charset = 'utf8'
-        content = resource.read().decode(charset)
-        _LOGGER.debug(content['tunnels'][0]['public_url'])
+        json_str = resource.read().decode(charset)
+        json_dict = json.loads(json_str)
+        public_url = None
+        if 'tunnels' in json_dict:
+            if len(json_dict['tunnels']) > 0:
+                if 'public_url' in json_dict['tunnels'][0]:
+                    public_url = json_dict['tunnels'][0]['public_url']
 
+        if public_url is not None:
+            public_url = ha_local_protocol + public_url[3:]
+
+        if public_url != hass.data[DOMAIN]['public_url']:
+            _LOGGER.debug('public url changed in ' + str(public_url))
+            hass.data[DOMAIN]['public_url'] = public_url
+            attributes = {"icon": "mdi:transit-connection-variant"}
+            hass.states.async_set(DOMAIN + "." + OBJECT_ID_PUBLIC_URL, str(public_url), attributes)
+            if public_url is None:
+                # since the public url has become None, restart ngrok
+                hass.async_create_task(async_ngrok_installation())
+        pass
 
     await async_update_ngrok_status()
 
     """ Called at the very beginning and periodically, each 5 seconds """
     async def async_periodic_update_ngrok_status(event_time):
-        #await async_update_devices_status()
+        _LOGGER.debug('async_periodic_update_ngrok_status()')
         hass.async_create_task(async_update_ngrok_status())
+        pass
 
     """ This is used to update the Meross Devices status periodically """
     async_track_time_interval(hass, async_periodic_update_ngrok_status, scan_interval)
