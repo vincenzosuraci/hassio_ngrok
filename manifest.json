@@ -1,0 +1,8 @@
+{
+  "domain": "ngrok",
+  "name": "Home Assistant NGRok",
+  "documentation": "https://github.com/vincenzosuraci/hassio_ngrok",
+  "dependencies": [],
+  "codeowners": ["@vincenzosuraci"],
+  "requirements": []
+}
