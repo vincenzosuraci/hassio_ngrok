@@ -90,6 +90,7 @@ async def async_setup(hass, config):
             _LOGGER.debug('Executing: ' + str(command_line))
             output_bytes = subprocess.check_output(command_line, shell=True)
             output_str = output_bytes.decode('utf8')
+            _LOGGER.debug(output_str)
         except subprocess.CalledProcessError as CPE:
             _LOGGER.error('ERROR: ' + str(CPE))
         pass
@@ -171,28 +172,34 @@ async def async_setup(hass, config):
                         # ngrok execution file exists!
                         _LOGGER.debug(ngrok_file_ext + ' file found.')
                         _LOGGER.debug('Changing working directory to: ' + ngrok_dir)
+                        # make ngrok file executable
+                        if not os.access(ngrok_file + ext, os.X_OK):
+                            os.chmod(ngrok_file_ext, stat.S_IEXEC)
                         # changing working directory to ngrok directory
                         os.chdir(ngrok_dir)
                         _LOGGER.debug('working directory is: ' + os.getcwd())
                         # create command line to generate authentication token
                         ngrok_exec = prefix + 'ngrok' + ext
-                        command_line = [ngrok_exec, 'authtoken', ngrok_auth_token]
+                        # command_line = [ngrok_exec, 'authtoken', ngrok_auth_token]
+                        command_line = [ngrok_exec + ' authtoken ' + ngrok_auth_token]
                         _LOGGER.debug('Executing: ' + str(command_line))
                         try:
                             output_bytes = subprocess.check_output(command_line, shell=True)
                             output_str = output_bytes.decode('utf8')[0:-1]
                             needle = 'Authtoken saved to configuration file'
                             if output_str[0:len(needle)] == needle:
-                                _LOGGER.debug('output: ' + output_str)
-                                command_line = [ngrok_exec, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
+                                _LOGGER.debug(output_str)
+                                # command_line = [ngrok_exec, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
+                                command_line = [ngrok_exec + ' tcp ' + ha_local_ip_address + ':' + str(ha_local_port)]
                                 # create thread and starts it
                                 hass.data[DOMAIN]['thread'] = threading.Thread(target=thread_run_ngrok, args=[command_line])
                                 hass.data[DOMAIN]['thread'].start()
                             else:
                                 _LOGGER.error('saving ngrok authentication token failed')
-                        except PermissionError as PE:
+                                _LOGGER.error(output_str)
+                        except (subprocess.CalledProcessError, PermissionError) as E:
                             _LOGGER.error('Permission error')
-                            _LOGGER.debug(str(PE))
+                            _LOGGER.debug(str(E))
                             _LOGGER.debug(oct(stat.S_IMODE(os.lstat(ngrok_file + ext).st_mode)))
                             _LOGGER.debug(oct(stat.S_IMODE(os.stat(ngrok_file + ext).st_mode)))
                             _LOGGER.debug(os.access(ngrok_file + ext, os.X_OK))
@@ -218,18 +225,25 @@ async def async_setup(hass, config):
     """ Called at the very beginning and periodically, each 5 seconds """
     async def async_update_ngrok_status():
         _LOGGER.debug('async_update_devices_status()')
-        url = 'http://localhost:4040/api/tunnels'
-        resource = urllib.request.urlopen(url)
-        charset = resource.headers.get_content_charset()
-        if charset is None:
-            charset = 'utf8'
-        json_str = resource.read().decode(charset)
-        json_dict = json.loads(json_str)
+
         public_url = None
-        if 'tunnels' in json_dict:
-            if len(json_dict['tunnels']) > 0:
-                if 'public_url' in json_dict['tunnels'][0]:
-                    public_url = json_dict['tunnels'][0]['public_url']
+
+        url = 'http://localhost:4040/api/tunnels'
+        _LOGGER.debug('Connecting to ' + url)
+        try:
+            resource = urllib.request.urlopen(url)
+            charset = resource.headers.get_content_charset()
+            if charset is None:
+                charset = 'utf8'
+            json_str = resource.read().decode(charset)
+            json_dict = json.loads(json_str)
+            if 'tunnels' in json_dict:
+                if len(json_dict['tunnels']) > 0:
+                    if 'public_url' in json_dict['tunnels'][0]:
+                        public_url = json_dict['tunnels'][0]['public_url']
+        except (ConnectionRefusedError, urllib.error.URLError) as E:
+            _LOGGER.error(str(E))
+            pass
 
         if public_url is not None:
             public_url = ha_local_protocol + public_url[3:]
