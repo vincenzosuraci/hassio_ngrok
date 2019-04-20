@@ -14,7 +14,6 @@ config
       
 ```
 2. **Remember to reboot Hassio (or Home Assistant)**
-- Note that the meross_iot framework will be downloaded automatically.
 
 Configuration
 ============
