@@ -62,7 +62,8 @@ or when it changes.
 - Then, edit your automations.yaml file:
 ```
 - alias: "Ngrok Public URL"
-  initial_state: 'on'
+  hide_entity: true
+  initial_state: 'true'
   trigger:
     platform: state
     entity_id: ngrok.public_url
@@ -70,7 +71,7 @@ or when it changes.
   - service: notify.telegram
     data:
       title: '*Server*'
-      message: 'Current public url: {{ ngrok.public_url.state }}'
+      message: 'Current public url: {{ states.ngrok.public_url.state }}'      
 ```
 
 Debug
