@@ -88,8 +88,8 @@ async def async_setup(hass, config):
     def thread_run_ngrok(command_line):
         try:
             _LOGGER.debug('Executing: ' + str(command_line))
-            output_bytes = subprocess.check_output(command_line, shell=True)
-            output_str = output_bytes.decode('utf8')
+            output_bytes = subprocess.run(command_line, capture_output=True)
+            output_str = output_bytes.stdout.decode()
             _LOGGER.debug(output_str)
         except subprocess.CalledProcessError as CPE:
             _LOGGER.error('ERROR: ' + str(CPE))
@@ -181,16 +181,16 @@ async def async_setup(hass, config):
                         # create command line to generate authentication token
                         ngrok_exec = prefix + 'ngrok' + ext
                         # command_line = [ngrok_exec, 'authtoken', ngrok_auth_token]
-                        command_line = [ngrok_exec + ' authtoken ' + ngrok_auth_token]
+                        command_line = [ngrok_exec , 'authtoken' , ngrok_auth_token]
                         _LOGGER.debug('Executing: ' + str(command_line))
                         try:
-                            output_bytes = subprocess.check_output(command_line, shell=True)
-                            output_str = output_bytes.decode('utf8')[0:-1]
+                            output_bytes = subprocess.run(command_line, capture_output=True)
+                            output_str = output_bytes.stdout.decode()
                             needle = 'Authtoken saved to configuration file'
                             if output_str[0:len(needle)] == needle:
                                 _LOGGER.debug(output_str)
                                 # command_line = [ngrok_exec, 'tcp', ha_local_ip_address + ':' + str(ha_local_port)]
-                                command_line = [ngrok_exec + ' tcp ' + ha_local_ip_address + ':' + str(ha_local_port)]
+                                command_line = [ngrok_exec , 'tcp' , ha_local_ip_address + ':' + str(ha_local_port)]
                                 # create thread and starts it
                                 hass.data[DOMAIN]['thread'] = threading.Thread(target=thread_run_ngrok, args=[command_line])
                                 hass.data[DOMAIN]['thread'].start()
@@ -246,7 +246,10 @@ async def async_setup(hass, config):
             pass
 
         if public_url is not None:
-            public_url = ha_local_protocol + public_url[3:]
+            if public_url[0:5] == 'https':
+                public_url = ha_local_protocol + public_url[4:]
+            else:
+                public_url = ha_local_protocol + public_url[3:]
 
         if public_url != hass.data[DOMAIN]['public_url']:
             _LOGGER.debug('public url changed in ' + str(public_url))
@@ -270,5 +273,3 @@ async def async_setup(hass, config):
     async_track_time_interval(hass, async_periodic_update_ngrok_status, scan_interval)
 
     return True
-
-
